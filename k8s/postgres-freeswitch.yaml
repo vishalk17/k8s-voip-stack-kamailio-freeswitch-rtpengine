@@ -1,0 +1,97 @@
+# Author: Vishal Kapadi (github.com/vishalk17)
+# YouTube: youtube.com/@vishalk17
+# LinkedIn: linkedin.com/in/vishal-kapadi
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: freeswitch-db-init
+  namespace: sip
+data:
+  init-fs.sql: |
+    -- Create role if it doesn't exist
+    DO $$ 
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'freeswitch') THEN
+            EXECUTE 'CREATE ROLE freeswitch WITH PASSWORD ''freeswitch@vishalk17'' LOGIN SUPERUSER CREATEDB';
+        END IF;
+    END
+    $$;
+    
+    -- Grant privileges (this is idempotent)
+    GRANT ALL PRIVILEGES ON DATABASE freeswitch TO freeswitch;
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql-freeswitch
+  namespace: sip
+spec:
+  serviceName: postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgresql-freeswitch
+  template:
+    metadata:
+      labels:
+        app: postgresql-freeswitch
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:13
+          env:
+            - name: POSTGRES_USER
+              value: postgres
+            - name: POSTGRES_PASSWORD
+              value: postgres
+            - name: POSTGRES_DB
+              value: freeswitch
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: init-script
+              mountPath: /docker-entrypoint-initdb.d
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - postgres
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - postgres
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: init-script
+          configMap:
+            name: freeswitch-db-init
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: sip
+spec:
+  clusterIP: None
+  selector:
+    app: postgresql-freeswitch
+  ports:
+    - port: 5432
+      targetPort: 5432

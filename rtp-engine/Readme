@@ -1,6 +1,0 @@
-how to build and run 
-
-
-docker build -t rtpenginev03 .
-
-docker-compose up

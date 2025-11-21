@@ -1,0 +1,68 @@
+# Author: Vishal Kapadi (github.com/vishalk17)
+# YouTube: youtube.com/@vishalk17
+# LinkedIn: linkedin.com/in/vishal-kapadi
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: freeswitch
+  namespace: sip
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: freeswitch
+  template:
+    metadata:
+      labels:
+        app: freeswitch
+    spec:
+      containers:
+        - name: freeswitch
+          image: vishalk17/freeswitch-1.10.12:v1.1
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              add:
+                - SYS_NICE
+                - SYS_RESOURCE
+          ports:
+            - name: sip-udp
+              containerPort: 5060
+              protocol: UDP
+            - name: sip-tcp
+              containerPort: 5060
+              protocol: TCP
+            - name: sips-tcp
+              containerPort: 5061
+              protocol: TCP
+            - name: esl
+              containerPort: 8021
+              protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeswitch
+  namespace: sip
+spec:
+  type: ClusterIP
+  selector:
+    app: freeswitch
+  ports:
+    - name: sip-udp
+      port: 5060
+      targetPort: 5060
+      protocol: UDP
+    - name: sip-tcp
+      port: 5060
+      targetPort: 5060
+      protocol: TCP
+    - name: sips-tcp
+      port: 5061
+      targetPort: 5061
+      protocol: TCP
+    - name: esl
+      port: 8021
+      targetPort: 8021
+      protocol: TCP

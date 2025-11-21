@@ -1,0 +1,227 @@
+# Author: Vishal Kapadi (github.com/vishalk17)
+# YouTube: youtube.com/@vishalk17
+# LinkedIn: linkedin.com/in/vishal-kapadi
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kamailio-config
+  namespace: sip
+data:
+  kamailio.cfg: |
+    #!KAMAILIO
+    #
+    # Kamailio - Example Configuration
+    # For PostgreSQL and FreeSWITCH integration
+    #
+    
+    ####### Global Parameters #########
+    
+    # Log level (2=info, 3=debug)
+    debug=2
+    # Run as daemon
+    fork=yes
+    # Number of worker processes
+    children=8
+    
+    # Send error logs to syslog instead of stderr
+    log_stderror=no
+    # Syslog facility
+    log_facility=LOG_LOCAL0
+    
+    # Auto-detect IP addresses and ports
+    auto_aliases=yes
+    listen=udp:0.0.0.0:5060
+    
+    ####### Defines - Variables #########
+    
+    #!define WITH_POSTGRES
+    #!define WITH_AUTH
+    #!define WITH_USRLOC
+    
+    # Database connection
+    #!ifdef WITH_POSTGRES
+        #!define DBURL "postgres://kamailio:kamailio@postgres:5432/kamailio"
+    #!endif
+    
+    
+    # FreeSWITCH connection
+    #!define FREESWITCH_IP "freeswitch"
+    #!define FREESWITCH_PORT "5060"
+    
+    ####### Modules Section #########
+    
+    # IMPORTANT: Module load order is critical!
+    # tm must be loaded BEFORE other modules
+    
+    # --- Core modules (load first) ---
+    loadmodule "tm.so"
+    loadmodule "sl.so"
+    loadmodule "rr.so"
+    loadmodule "pv.so"
+    loadmodule "maxfwd.so"
+    loadmodule "textops.so"
+    loadmodule "siputils.so"
+    loadmodule "xlog.so"
+    loadmodule "sanity.so"
+    
+    # --- NAT Traversal ---
+    loadmodule "nathelper.so"
+    
+    # --- Media Proxy (rtpengine) ---
+    loadmodule "rtpengine.so"
+    
+    # --- Database modules ---
+    #!ifdef WITH_POSTGRES
+        loadmodule "db_postgres.so"
+    #!endif
+    
+    # --- Authentication ---
+    #!ifdef WITH_AUTH
+        loadmodule "auth.so"
+        loadmodule "auth_db.so"
+    #!endif
+    
+    # --- User location modules ---
+    #!ifdef WITH_USRLOC
+        loadmodule "usrloc.so"
+        loadmodule "registrar.so"
+    #!endif
+    
+    
+    ####### Module Parameters #########
+    
+    # ----- tm params -----
+    modparam("tm", "fr_timer", 30000)
+    modparam("tm", "fr_inv_timer", 120000)
+    
+    # ----- rr params -----
+    modparam("rr", "enable_full_lr", 1)
+    modparam("rr", "append_fromtag", 0)
+    
+    # ----- auth_db params -----
+    #!ifdef WITH_AUTH
+    modparam("auth_db", "db_url", DBURL)
+    modparam("auth_db", "calculate_ha1", 1)
+    modparam("auth_db", "password_column", "password")
+    modparam("auth_db", "load_credentials", "")
+    modparam("auth_db", "use_domain", 0)
+    modparam("auth_db", "version_table", 0)
+    #!endif
+    
+    # ----- usrloc params -----
+    #!ifdef WITH_USRLOC
+    modparam("usrloc", "db_url", DBURL)
+    modparam("usrloc", "db_mode", 2)
+    modparam("usrloc", "use_domain", 0)
+    modparam("usrloc", "matching_mode", 0)
+    #!endif
+    
+    # ----- registrar params -----
+    #!ifdef WITH_USRLOC
+    modparam("registrar", "method_filtering", 1)
+    modparam("registrar", "max_expires", 3600)
+    modparam("registrar", "min_expires", 60)
+    #!endif
+    
+    
+    # ----- rtpengine params -----
+    # Connect to RTPengine on host network
+    modparam("rtpengine", "rtpengine_sock", "udp:127.0.0.1:22222")
+    
+    ####### Routing Logic #########
+    
+    request_route {
+        # 1. Initial checks
+        if (!mf_process_maxfwd_header("10")) {
+            sl_send_reply("483", "Too Many Hops");
+            exit;
+        }
+    
+        if (!sanity_check("1511", "7")) {
+            xlog("L_ERR", "Malformed SIP message from $si:$sp\n");
+            exit;
+        }
+    
+        # 2. NAT handling
+        force_rport();
+        if (nat_uac_test("19")) {
+            fix_nated_contact();
+        }
+    
+        # 3. Pre-routing actions
+        if (!is_method("REGISTER")) {
+            record_route();
+        }
+    
+        # Remove RTP sessions for BYE/CANCEL
+        if (is_method("BYE|CANCEL")) {
+            rtpengine_delete();
+        }
+    
+        # Anchor RTP if INVITE has SDP
+        if (is_method("INVITE") && has_body("application/sdp")) {
+            rtpengine_manage("force trust-address replace-origin replace-session-connection");
+        }
+    
+        # 4. Authentication and registration
+        if (is_method("REGISTER")) {
+            #!ifdef WITH_USRLOC
+                # Authentication is currently disabled
+                # Must be enabled in production!
+                
+                if (!save("location")) {
+                    sl_reply_error();
+                    exit;
+                }
+                xlog("L_INFO", "REGISTER successful for $fu from $si:$sp\n");
+                exit;
+            #!endif
+        }
+    
+        # 5. Call routing logic
+        # Detect local internal (numeric) extensions and resolve via usrloc
+        if (is_method("INVITE") && $rU =~ "^[0-9]+$") {
+            xlog("L_INFO", "Extension call detected: $fU -> $rU ($ru)\n");
+            
+            #!ifdef WITH_USRLOC
+                # Lookup in location database
+                if (lookup("location")) {
+                    xlog("L_INFO", "User found in location DB, routing to $du\n");
+                    t_on_reply("NAT_REPLY");
+                    t_relay();
+                    exit;
+                } else {
+                    xlog("L_WARN", "User $rU not found in location DB\n");
+                }
+            #!endif
+            
+            # User not found
+            sl_send_reply("404", "User Not Found");
+            exit;
+        }
+    
+        # If not local/internal, forward to FreeSWITCH
+        xlog("L_INFO", "External call - Forwarding to FreeSWITCH from $fu to $ru\n");
+        $du = "sip:freeswitch:5060";
+        
+        t_on_reply("NAT_REPLY");
+        if (!t_relay()) {
+            sl_reply_error();
+        }
+        exit;
+    }
+    
+    # Response handling
+    onreply_route[NAT_REPLY] {
+        xlog("L_INFO", "Reply received: $rs $rr\n");
+    
+        # Update RTP on 183/2xx responses with SDP
+        if ((t_check_status("183") || t_check_status("2[0-9][0-9]")) && has_body("application/sdp")) {
+            rtpengine_manage("force trust-address replace-origin replace-session-connection");
+        }
+        
+        if (nat_uac_test("19")) {
+            fix_nated_contact();
+        }
+    }

@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # -------------------------
+  # Kamailio Database
+  # -------------------------
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: kamailio
+      POSTGRES_PASSWORD: kamailio
+      POSTGRES_DB: kamailio
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - pg_data1:/var/lib/postgresql/data
+    networks:
+      - fs_net
+
+
+  # -------------------------
+  # Kamailio SIP Server
+  # -------------------------
+  kamailio:
+    container_name: kamailio
+    image: ghcr.io/vishalk17/kamailio-6.0.4-bookworm:v1
+    environment:
+      DBHOST: postgres
+      DBUSER: kamailio
+      DBPASS: kamailio
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "5060:5060/udp"
+    depends_on:
+      - postgres
+    networks:
+      - fs_net
+
+  # -------------------------
+  # FreeSWITCH Database
+  # -------------------------
+  postgresql:
+    image: postgres:13
+    container_name: postgresql
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: freeswitch
+    volumes:
+      - postgres_data1:/var/lib/postgresql/data
+      - ./init-fs.sql:/docker-entrypoint-initdb.d/init-fs.sql
+    networks:
+      - fs_net
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U freeswitch"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # -------------------------
+  # FreeSWITCH Server
+  # -------------------------
+  freeswitch:
+    container_name: freeswitch
+    image: vishalk17/freeswitch-1.10.12:v1.1
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    networks:
+      - fs_net
+    expose:
+      - "5060"
+      - "5061"
+    ports:
+      - "8021:8021/tcp"
+    restart: always
+    cap_add:
+      - SYS_NICE
+      - SYS_RESOURCE
+
+# -------------------------
+# VOLUMES
+# -------------------------
+volumes:
+  pg_data1:
+  postgres_data1:
+
+# -------------------------
+# NETWORK
+# -------------------------
+networks:
+  fs_net:
+    driver: bridge
+

@@ -1,0 +1,57 @@
+# Author: Vishal Kapadi (github.com/vishalk17)
+# YouTube: youtube.com/@vishalk17
+# LinkedIn: linkedin.com/in/vishal-kapadi
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rtpengine
+  namespace: sip
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rtpengine
+  template:
+    metadata:
+      labels:
+        app: rtpengine
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # Only schedule on nodes labeled for VoIP workloads
+      nodeSelector:
+        voip-enabled: "true"
+      # Ensure RTPengine and Kamailio run on same node
+      affinity:
+        podAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - kamailio
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: rtpengine
+          image: readytalk/rtpengine-docker:mr6.2.1.1-39f2f23
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - NET_ADMIN
+                - SYS_ADMIN
+          env:
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              /usr/sbin/rtpengine --interface=$NODE_IP --listen-ng=127.0.0.1:22222 --port-min=10000 --port-max=20000 --log-stderr --foreground

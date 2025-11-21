@@ -1,0 +1,76 @@
+# Author: Vishal Kapadi (github.com/vishalk17)
+# YouTube: youtube.com/@vishalk17
+# LinkedIn: linkedin.com/in/vishal-kapadi
+#
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kamailio
+  namespace: sip
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kamailio
+  template:
+    metadata:
+      labels:
+        app: kamailio
+    spec:
+      # Use hostNetwork to communicate with RTPengine on host
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # Only schedule on nodes labeled for VoIP workloads
+      nodeSelector:
+        voip-enabled: "true"
+      # CRITICAL: Ensure Kamailio runs on same node as RTPengine
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - rtpengine
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: kamailio
+          image: ghcr.io/vishalk17/kamailio-6.0.4-bookworm:v1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: DBHOST
+              value: postgres
+            - name: DBUSER
+              value: kamailio
+            - name: DBPASS
+              value: kamailio
+          args: ["-DD", "-E", "-f", "/etc/kamailio/kamailio.cfg"]
+          ports:
+            - name: sip-udp
+              containerPort: 5060
+              protocol: UDP
+          volumeMounts:
+            - name: kamailio-config
+              mountPath: /etc/kamailio/kamailio.cfg
+              subPath: kamailio.cfg
+      volumes:
+        - name: kamailio-config
+          configMap:
+            name: kamailio-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kamailio
+  namespace: sip
+spec:
+  type: NodePort
+  selector:
+    app: kamailio
+  ports:
+    - name: sip-udp
+      protocol: UDP
+      port: 5060
+      targetPort: 5060
+      nodePort: 30060

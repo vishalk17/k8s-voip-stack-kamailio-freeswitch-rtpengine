@@ -1,0 +1,8 @@
+# Author: Vishal Kapadi (github.com/vishalk17)
+# YouTube: youtube.com/@vishalk17
+# LinkedIn: linkedin.com/in/vishal-kapadi
+#
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sip
