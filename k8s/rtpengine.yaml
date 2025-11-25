@@ -8,7 +8,7 @@ metadata:
   name: rtpengine
   namespace: sip
 spec:
-  replicas: 1
+  replicas: 2  # HA: 2 instances on different tainted nodes
   selector:
     matchLabels:
       app: rtpengine
@@ -16,12 +16,32 @@ spec:
     metadata:
       labels:
         app: rtpengine
-    spec:
+        rtpengine-instance: "true"  # For podAntiAffinity
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
 
+      # Schedule only on nodes labeled for RTPengine
       nodeSelector:
-        kubernetes.io/hostname: ip-192-168-32-28.ap-south-1.compute.internal
+        rtpengine-node: "true"
+
+      # Tolerate taint on RTPengine nodes
+      tolerations:
+        - key: rtpengine
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+
+      # Ensure RTPengine instances run on different nodes
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: rtpengine-instance
+                    operator: In
+                    values:
+                      - "true"
+              topologyKey: kubernetes.io/hostname
 
       containers:
         - name: rtpengine

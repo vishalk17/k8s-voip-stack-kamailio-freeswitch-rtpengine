@@ -8,7 +8,7 @@ metadata:
   name: freeswitch
   namespace: sip
 spec:
-  replicas: 1
+  replicas: 2  # HA: 2 replicas across different nodes
   selector:
     matchLabels:
       app: freeswitch
@@ -17,11 +17,7 @@ spec:
       labels:
         app: freeswitch
     spec:
-      # Only schedule on SIP nodes (Node1 + Node2)
-      nodeSelector:
-        role: sip
-
-      # Make sure FS pods run on different nodes
+      # Spread FreeSWITCH pods across different nodes for HA
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

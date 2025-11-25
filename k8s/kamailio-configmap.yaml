@@ -49,8 +49,13 @@ data:
     #!define FREESWITCH_IP "freeswitch"
     #!define FREESWITCH_PORT "5060"
     
-    # RTPengine connection (update this if RTPengine moves to different node)
-    #!define RTPENGINE_SOCK "udp:192.168.32.28:22222"
+    # RTPengine connections - Multiple instances for HA
+    # Update these IPs when deploying RTPengines on different nodes
+    #!define RTPENGINE_SOCK_1 "udp:192.168.32.28:22222"
+    #!define RTPENGINE_SOCK_2 "udp:192.168.26.180:22222"
+    
+    # Enable HA mode for multiple RTPengines
+    #!define WITH_RTPENGINE_HA
     
     ####### Modules Section #########
     
@@ -129,8 +134,18 @@ data:
     
     
     # ----- rtpengine params -----
-    # Connect to RTPengine (using hostNetwork on specific node)
-    modparam("rtpengine", "rtpengine_sock", RTPENGINE_SOCK)
+    # Multiple RTPengine instances for HA and load balancing
+    #!ifdef WITH_RTPENGINE_HA
+        modparam("rtpengine", "rtpengine_sock", RTPENGINE_SOCK_1)
+        modparam("rtpengine", "rtpengine_sock", RTPENGINE_SOCK_2)
+        # Automatic failover and load balancing
+        modparam("rtpengine", "rtpengine_allow_op", 1)
+        modparam("rtpengine", "rtpengine_retr", 3)
+        modparam("rtpengine", "rtpengine_tout_ms", 500)
+    #!else
+        # Single RTPengine (fallback)
+        modparam("rtpengine", "rtpengine_sock", RTPENGINE_SOCK_1)
+    #!endif
 
 
     

@@ -8,7 +8,7 @@ metadata:
   name: kamailio
   namespace: sip
 spec:
-  replicas: 1
+  replicas: 2  # HA: 2 replicas across different nodes
   selector:
     matchLabels:
       app: kamailio

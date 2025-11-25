@@ -107,33 +107,55 @@ Complete guide for deploying Kamailio + FreeSWITCH + RTPengine on Kubernetes.
 **Current Architecture:**
 - ✅ **Kamailio**: Can run on **any node** (uses pod network)
 - ✅ **FreeSWITCH**: Can run on **any node** (uses pod network)
-- ⚠️ **RTPengine**: Pinned to **specific node** (uses hostNetwork)
+- ⚠️ **RTPengine**: Runs on **tainted nodes only** (uses hostNetwork)
 
-**RTPengine Node Selection:**
+**RTPengine HA Setup (2 replicas):**
 ```yaml
-nodeSelector:
-  kubernetes.io/hostname: ip-192-168-32-28.ap-south-1.compute.internal
+spec:
+  replicas: 2  # 2 instances on different nodes
+  
+  nodeSelector:
+    rtpengine-node: "true"  # Only on labeled nodes
+  
+  tolerations:
+    - key: rtpengine
+      value: "true"
+      effect: NoSchedule
+  
+  affinity:
+    podAntiAffinity:  # Ensures different nodes
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: rtpengine-instance
+                operator: In
+                values: ["true"]
+          topologyKey: kubernetes.io/hostname
 ```
 
-**Why RTPengine is Pinned:**
-- Must bind to specific node's network interface
-- Advertises that node's public IP for RTP traffic
-- **Only ONE RTPengine per node** due to hostNetwork port conflicts
-- Update `RTPENGINE_SOCK` in kamailio-configmap.yaml if you move RTPengine
-
-**Node Taints (Recommended):**
+**Setup RTPengine Nodes:**
 ```bash
-# Taint the RTPengine node to prevent other pods from scheduling there
-kubectl taint nodes ip-192-168-32-28.ap-south-1.compute.internal \
-  rtpengine=true:NoSchedule
+# 1. Label 2 nodes for RTPengine
+kubectl label nodes node-1 rtpengine-node=true
+kubectl label nodes node-2 rtpengine-node=true
 
-# RTPengine deployment tolerates this taint
+# 2. Taint nodes to dedicate them for RTPengine
+kubectl taint nodes node-1 rtpengine=true:NoSchedule
+kubectl taint nodes node-2 rtpengine=true:NoSchedule
+
+# 3. Deploy RTPengine (2 replicas will spread automatically)
+kubectl apply -f k8s/rtpengine.yaml
+
+# 4. Verify on different nodes
+kubectl get pods -n sip -l app=rtpengine -o wide
 ```
 
-This ensures:
-- Other pods don't consume resources on the RTPengine node
-- RTPengine has dedicated resources for media processing
-- No hostNetwork port conflicts with other applications
+**Why This Approach:**
+- ✅ **Single deployment** with `replicas: 2` (not 2 separate files)
+- ✅ **podAntiAffinity** ensures different nodes automatically
+- ✅ **Node labels** allow any labeled node to host RTPengine
+- ✅ **Taints** dedicate nodes for RTP processing
+- ✅ **ONE RTPengine per node** due to hostNetwork port conflicts
 
 **Kamailio High Availability:**
 ```yaml
@@ -153,17 +175,20 @@ affinity:
 ### **Prerequisites**
 
 1. **Kubernetes cluster** (tested on EKS 1.28+)
-2. **AWS Security Group** must allow:
+2. **At least 2 nodes** for RTPengine HA
+3. **AWS Security Group** must allow:
    - UDP 5060 (SIP signaling)
    - UDP 10000-20000 (RTP media) from `0.0.0.0/0`
-3. **Update RTPengine node** in `k8s/rtpengine.yaml`:
-   ```yaml
-   nodeSelector:
-     kubernetes.io/hostname: <your-node-name>
+4. **Label and taint 2 nodes** for RTPengine:
+   ```bash
+   kubectl label nodes node-1 node-2 rtpengine-node=true
+   kubectl taint nodes node-1 node-2 rtpengine=true:NoSchedule
    ```
-4. **Update RTPengine address** in `k8s/kamailio-configmap.yaml`:
+5. **Update Kamailio config** with both RTPengine IPs in `k8s/kamailio-configmap.yaml`:
    ```yaml
-   #!define RTPENGINE_SOCK "udp:<node-private-ip>:22222"
+   #!define RTPENGINE_SOCK_1 "udp:<node1-private-ip>:22222"
+   #!define RTPENGINE_SOCK_2 "udp:<node2-private-ip>:22222"
+   #!define WITH_RTPENGINE_HA
    ```
 
 ### **Deploy All Components**
@@ -204,33 +229,46 @@ kubectl logs -n sip -l app=kamailio --tail=20 | grep rtpengine
 
 ## 🔧 Configuration
 
-### **RTPengine Node Selection**
+### **RTPengine Node Preparation**
 
-RTPengine is pinned to a specific node using hostname selector:
+**Step 1: Label nodes for RTPengine (at least 2 nodes for HA):**
+```bash
+# Get node list
+kubectl get nodes -o wide
 
-```yaml
-nodeSelector:
-  kubernetes.io/hostname: ip-192-168-32-28.ap-south-1.compute.internal
+# Label 2 nodes for RTPengine
+kubectl label nodes ip-192-168-32-28.ap-south-1.compute.internal rtpengine-node=true
+kubectl label nodes ip-192-168-26-180.ap-south-1.compute.internal rtpengine-node=true
 ```
 
-**Taint the RTPengine node (Recommended):**
+**Step 2: Taint nodes to dedicate them for RTPengine:**
 ```bash
-# Prevent other pods from scheduling on RTPengine node
-kubectl taint nodes ip-192-168-32-28.ap-south-1.compute.internal \
-  rtpengine=true:NoSchedule
+# Taint both nodes
+kubectl taint nodes ip-192-168-32-28.ap-south-1.compute.internal rtpengine=true:NoSchedule
+kubectl taint nodes ip-192-168-26-180.ap-south-1.compute.internal rtpengine=true:NoSchedule
 ```
 
-**Move RTPengine to different node:**
+**Step 3: Get node IPs for Kamailio config:**
 ```bash
-# 1. Remove taint from old node
-kubectl taint nodes old-node rtpengine-
+# Get private IPs
+kubectl get nodes -o custom-columns=NAME:.metadata.name,IP:.status.addresses[?(@.type=="InternalIP")].address
 
-# 2. Taint new node
+# Update k8s/kamailio-configmap.yaml:
+#!define RTPENGINE_SOCK_1 "udp:192.168.32.28:22222"
+#!define RTPENGINE_SOCK_2 "udp:192.168.26.180:22222"
+```
+
+**Add/Remove RTPengine Nodes:**
+```bash
+# Add new node
+kubectl label nodes new-node rtpengine-node=true
 kubectl taint nodes new-node rtpengine=true:NoSchedule
+kubectl scale deployment rtpengine -n sip --replicas=3
 
-# 3. Update rtpengine.yaml with new hostname
-# 4. Update kamailio-configmap.yaml with new node's private IP
-# 5. Apply changes
+# Remove node
+kubectl label nodes old-node rtpengine-node-
+kubectl taint nodes old-node rtpengine-
+kubectl scale deployment rtpengine -n sip --replicas=2
 ```
 
 ### **Automatic Public IP Discovery**
@@ -474,14 +512,15 @@ k8s/
 ## 📝 Notes
 
 1. **hostNetwork ONLY for RTPengine** - Kamailio and FreeSWITCH use pod network
-2. **RTPengine pinned to specific node** - uses hostname in nodeSelector
-3. **ONE RTPengine per node** - hostNetwork causes port conflicts if multiple on same node
-4. **Taint RTPengine node** - prevents other pods from consuming resources
-5. **Automatic public IP discovery** - uses `curl ifconfig.me` on pod startup
-6. **Kamailio connects via node IP** - not localhost (e.g., `192.168.32.28:22222`)
-7. **AWS Security Group** must allow UDP 10000-20000 from `0.0.0.0/0`
-8. **Kamailio can scale** - podAntiAffinity spreads replicas across nodes
-9. **Update two files when moving RTPengine**: rtpengine.yaml (nodeSelector) and kamailio-configmap.yaml (RTPENGINE_SOCK)
+2. **Single deployment, multiple replicas** - One rtpengine.yaml with `replicas: 2`
+3. **podAntiAffinity** - Automatically spreads RTPengine pods across different nodes
+4. **Node labels** - Use `rtpengine-node=true` to mark nodes for RTPengine
+5. **Taint nodes** - Dedicates nodes for RTPengine, prevents other pods
+6. **ONE RTPengine per node** - hostNetwork causes port conflicts if multiple on same node
+7. **Automatic public IP discovery** - uses `curl ifconfig.me` on pod startup
+8. **Kamailio load balances** - Connects to multiple RTPengines automatically
+9. **AWS Security Group** must allow UDP 10000-20000 from `0.0.0.0/0`
+10. **Easy scaling** - Just update `replicas` and add more labeled nodes
 
 ---
 
