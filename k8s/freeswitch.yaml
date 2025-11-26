@@ -17,17 +17,20 @@ spec:
       labels:
         app: freeswitch
     spec:
-      # Spread FreeSWITCH pods across different nodes for HA
+      # Prefer to spread FreeSWITCH replicas across different nodes
+      # But allow same node if insufficient nodes available
       affinity:
         podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                - key: app
-                  operator: In
-                  values:
-                    - freeswitch
-              topologyKey: kubernetes.io/hostname
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - freeswitch
+                topologyKey: kubernetes.io/hostname
 
       containers:
         - name: freeswitch

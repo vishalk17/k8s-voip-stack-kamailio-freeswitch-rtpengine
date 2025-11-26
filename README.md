@@ -157,16 +157,26 @@ kubectl get pods -n sip -l app=rtpengine -o wide
 - ✅ **Taints** dedicate nodes for RTP processing
 - ✅ **ONE RTPengine per node** due to hostNetwork port conflicts
 
-**Kamailio High Availability:**
+**Kamailio & FreeSWITCH High Availability:**
 ```yaml
-# Kamailio uses podAntiAffinity to spread replicas
+# Prefer to spread replicas across different nodes
+# But allow same node if insufficient nodes
 affinity:
   podAntiAffinity:
-    requiredDuringSchedulingIgnoredDuringExecution:
-      - labelSelector: ...
-        topologyKey: kubernetes.io/hostname
-# Each Kamailio replica runs on different node
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector: ...
+          topologyKey: kubernetes.io/hostname
 ```
+
+**Scheduling Behavior:**
+- **3+ nodes available**: Each replica on different node ✅
+- **2 nodes, 3 replicas**: 2 pods on one node, 1 on another ✅
+- **1 node only**: All 3 pods on same node ✅ (still works!)
+
+**RTPengine uses REQUIRED** (must be different nodes)  
+**Kamailio/FreeSWITCH use PREFERRED** (flexible)
 
 ---
 

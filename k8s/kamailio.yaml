@@ -17,17 +17,20 @@ spec:
       labels:
         app: kamailio
     spec:
-      # Ensure each Kamailio replica runs on a different node (for HA)
+      # Prefer to spread Kamailio replicas across different nodes
+      # But allow same node if insufficient nodes available
       affinity:
         podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                  - key: app
-                    operator: In
-                    values:
-                      - kamailio
-              topologyKey: kubernetes.io/hostname
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - kamailio
+                topologyKey: kubernetes.io/hostname
       containers:
         - name: kamailio
           image: ghcr.io/vishalk17/kamailio-6.0.4-bookworm:v1
